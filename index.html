@@ -203,7 +203,7 @@ button { cursor: pointer; }
 .person { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
 .person summary {
   list-style: none; cursor: pointer; padding: 12px 14px; display: grid;
-  grid-template-columns: auto 1fr auto; gap: 2px 12px; align-items: center;
+  grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center;
 }
 .person summary::-webkit-details-marker { display: none; }
 .person .nm { font-weight: 600; overflow-wrap: anywhere; }
@@ -214,15 +214,18 @@ button { cursor: pointer; }
 .person .body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
 .person .grp { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .person .gh { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.person .gleft { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .person .gname { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.person .grp.paid .gsum b { color: var(--ok); }
+.person .rest { color: var(--muted); font-size: 13px; font-weight: 500; }
 .person .gsum { font-size: 13px; color: var(--muted); }
 .person .gsum b { color: var(--accent); font-weight: 600; font-size: 15px; }
 .person .days { display: flex; flex-wrap: wrap; gap: 6px; }
 .person .grand { border-top: 2px solid var(--line); padding-top: 10px; display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
 .person .grand .amt { color: var(--accent); font-size: 18px; }
 .paidbtn {
-  grid-row: 1 / span 2; width: 38px; height: 38px; border-radius: 10px; border: 2px solid var(--line);
-  background: var(--bg); color: transparent; font-size: 22px; line-height: 1; display: grid; place-items: center; padding: 0;
+  flex: none; width: 36px; height: 36px; border-radius: 10px; border: 2px solid var(--line);
+  background: var(--bg); color: transparent; font-size: 20px; line-height: 1; display: grid; place-items: center; padding: 0;
 }
 .paidbtn[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); color: var(--on-sel); }
 .person.paid { border-color: var(--ok); }
@@ -512,9 +515,9 @@ var SUPABASE_KEY = 'sb_publishable_WRpo_LiP2Po7KBhLanEF7g_fWD0LBLO'; // المف
       Object.keys(names).forEach(function (id) { if (!by[id]) by[id] = []; });
       var mk = state.y + '-' + pad(state.m + 1);
       state.payErr = false; state.paid = {};
-      var pr = await sb.from('payments').select('user_id, amount').eq('month', mk);
+      var pr = await sb.from('payments').select('user_id, unit, amount').eq('month', mk);
       if (pr.error) state.payErr = true;
-      else pr.data.forEach(function (x) { state.paid[x.user_id] = Number(x.amount) || 0; });
+      else pr.data.forEach(function (x) { if (HBY[x.unit]) state.paid[pkey(x.user_id, x.unit)] = Number(x.amount) || 0; });
       state.all = Object.keys(by).map(function (id) { return { id: id, name: names[id] || '', entries: by[id] }; });
       render();
     } catch (e) { toast('مقدرتش أحمّل بيانات المسؤول.'); }
@@ -648,17 +651,20 @@ var SUPABASE_KEY = 'sb_publishable_WRpo_LiP2Po7KBhLanEF7g_fWD0LBLO'; // المف
     $('#sheet').textContent = 'دوس على اليوم عشان تسجل شفت في ' + hp.name.replace(' - ', '، ') + '. دوس تاني لو عملت أكتر من شفت في نفس اليوم. بعد ' + MAXN + ' ضغطات بيرجع اليوم فاضي.';
   }
 
-  async function togglePaid(r) {
-    if (state.payErr) { toast('شغّل ملف payments.sql في Supabase الأول.'); return; }
+  function pkey(uid, unit) { return uid + '|' + unit; }
+  function isPaidKey(k) { return Object.prototype.hasOwnProperty.call(state.paid, k); }
+  async function togglePaid(r, x, amt) {
+    if (state.payErr) { toast('مش قادر أحفظ العلامة. اتأكد إن جدول payments متعدل في Supabase.'); return; }
     var mk = state.y + '-' + pad(state.m + 1);
-    var was = Object.prototype.hasOwnProperty.call(state.paid, r.id);
-    if (was) delete state.paid[r.id]; else state.paid[r.id] = r.c.pay;
+    var key = pkey(r.id, x.k);
+    var was = isPaidKey(key);
+    if (was) delete state.paid[key]; else state.paid[key] = amt;
     render();
     var res = was
-      ? await sb.from('payments').delete().eq('user_id', r.id).eq('month', mk)
-      : await sb.from('payments').upsert({ user_id: r.id, month: mk, amount: r.c.pay });
+      ? await sb.from('payments').delete().eq('user_id', r.id).eq('month', mk).eq('unit', x.k)
+      : await sb.from('payments').upsert({ user_id: r.id, month: mk, unit: x.k, amount: amt });
     if (res.error) {
-      if (was) state.paid[r.id] = r.c.pay; else delete state.paid[r.id];
+      if (was) state.paid[key] = amt; else delete state.paid[key];
       render(); toast('العلامة ماتحفظتش. جرب تاني.');
     }
   }
@@ -682,7 +688,7 @@ var SUPABASE_KEY = 'sb_publishable_WRpo_LiP2Po7KBhLanEF7g_fWD0LBLO'; // المف
     });
     $('#adCount').textContent = tc;
     $('#adPay').textContent = fmt(tp);
-    var due = 0; rows.forEach(function (r) { if (!Object.prototype.hasOwnProperty.call(state.paid, r.id)) due += r.c.pay; });
+    var due = 0; rows.forEach(function (r) { HOSPS.forEach(function (x) { if (r.c.h[x.k] && !isPaidKey(pkey(r.id, x.k))) due += r.c.h[x.k] * (Number(state.rates[x.k]) || 0); }); });
     $('#adDue').textContent = fmt(due);
     $('#adPeople').textContent = rows.filter(function (r) { return r.c.total; }).length;
     $('#exportBtn').hidden = !rows.length;
@@ -705,35 +711,50 @@ var SUPABASE_KEY = 'sb_publishable_WRpo_LiP2Po7KBhLanEF7g_fWD0LBLO'; // المف
     }
     rows.forEach(function (r) {
       var parts = HOSPS.filter(function (x) { return r.c.h[x.k]; }).map(function (x) { return hShort(x) + ' ' + r.c.h[x.k]; });
-      var isPaid = Object.prototype.hasOwnProperty.call(state.paid, r.id);
-      var changed = isPaid && Math.abs(state.paid[r.id] - r.c.pay) > 0.001;
-      var sections = HOSPS.filter(function (x) { return r.c.h[x.k]; }).map(function (x) {
+      var active = HOSPS.filter(function (x) { return r.c.h[x.k]; });
+      var paidN = 0, restAmt = 0, changedAny = false;
+      var sections = active.map(function (x) {
         var perDay = {};
         r.list.forEach(function (e) { if (e.h === x.k) perDay[e.d] = (perDay[e.d] || 0) + 1; });
         var rate = Number(state.rates[x.k]) || 0;
-        return h('div', { class: 'grp' },
+        var amt = r.c.h[x.k] * rate;
+        var key = pkey(r.id, x.k);
+        var paid = isPaidKey(key);
+        var changed = paid && Math.abs(state.paid[key] - amt) > 0.001;
+        if (paid) paidN++; else restAmt += amt;
+        if (changed) changedAny = true;
+        return h('div', { class: 'grp' + (paid ? ' paid' : '') },
           h('div', { class: 'gh' },
-            h('span', { class: 'gname' }, h('i', { class: 'dot ' + x.cls }), x.g + ' › ' + x.u),
-            h('span', { class: 'gsum num' }, r.c.h[x.k] + ' شفت × ' + fmt(rate) + ' = ', h('b', {}, fmt(r.c.h[x.k] * rate) + ' ج.م'))
+            h('span', { class: 'gleft' },
+              h('button', {
+                type: 'button', class: 'paidbtn', 'aria-pressed': paid,
+                'aria-label': (paid ? 'شيل علامة القبض من ' : 'علّم إنه قبض ') + r.name + ' من ' + x.g + ' › ' + x.u,
+                onclick: function () { togglePaid(r, x, amt); }
+              }, '✓'),
+              h('span', { class: 'gname' }, h('i', { class: 'dot ' + x.cls }), x.g + ' › ' + x.u),
+              paid ? h('span', { class: 'tag' + (changed ? ' warn' : '') }, changed ? 'اتقبض، والحساب اتغير' : 'اتقبض') : null
+            ),
+            h('span', { class: 'gsum num' }, r.c.h[x.k] + ' شفت × ' + fmt(rate) + ' = ', h('b', {}, fmt(amt) + ' ج.م'))
           ),
           h('div', { class: 'days' }, Object.keys(perDay).sort().map(function (d) {
             return h('span', { class: 'chip num' }, (+d.slice(8)) + ' ' + MONTHS[state.m] + (perDay[d] > 1 ? ' ×' + perDay[d] : ''));
           }))
         );
       });
-      var det = h('details', { class: 'person' + (r.c.total ? '' : ' zero') + (isPaid ? ' paid' : ''), onclick: null },
+      var allPaid = active.length > 0 && paidN === active.length;
+      var det = h('details', { class: 'person' + (r.c.total ? '' : ' zero') + (allPaid ? ' paid' : '') },
         h('summary', {},
-          h('button', {
-            type: 'button', class: 'paidbtn', 'aria-pressed': isPaid,
-            'aria-label': (isPaid ? 'شيل علامة القبض من ' : 'علّم إنه قبض: ') + r.name,
-            onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); togglePaid(r); }
-          }, '✓'),
-          h('span', { class: 'nm' }, r.name, isPaid ? h('span', { class: 'tag' + (changed ? ' warn' : '') }, changed ? 'اتقبض، والحساب اتغير' : 'اتقبض') : null),
+          h('span', { class: 'nm' }, r.name,
+            allPaid ? h('span', { class: 'tag' + (changedAny ? ' warn' : '') }, 'اتقبض كله')
+              : (paidN ? h('span', { class: 'tag warn' }, 'اتقبض ' + paidN + ' من ' + active.length) : null)),
           h('span', { class: 'pay num' }, fmt(r.c.pay) + ' ج.م'),
           h('span', { class: 'brk' }, parts.length ? parts.join(' · ') : 'مفيش شفتات الشهر ده'),
           h('span', { class: 'cnt num' }, r.c.total + ' شفت')
         ),
-        r.c.total ? h('div', { class: 'body' }, sections, h('div', { class: 'grand' }, h('span', {}, 'الإجمالي (' + r.c.total + ' شفت)'), h('span', { class: 'amt num' }, fmt(r.c.pay) + ' ج.م'))) : null
+        r.c.total ? h('div', { class: 'body' }, sections,
+          h('div', { class: 'grand' }, h('span', {}, 'الإجمالي (' + r.c.total + ' شفت)'), h('span', { class: 'amt num' }, fmt(r.c.pay) + ' ج.م')),
+          paidN && !allPaid ? h('div', { class: 'rest' }, 'لسه مااتقبضش: ' + fmt(restAmt) + ' ج.م') : null
+        ) : null
       );
       if (state.open[r.id]) det.open = true;
       det.addEventListener('toggle', function () { state.open[r.id] = det.open; });
@@ -830,10 +851,10 @@ var SUPABASE_KEY = 'sb_publishable_WRpo_LiP2Po7KBhLanEF7g_fWD0LBLO'; // المف
   });
   $('#exportBtn').addEventListener('click', async function () {
     var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
-    var head = ['الاسم'].concat(HOSPS.map(function (x) { return x.name; }), ['عدد الشفتات', 'المستحق (ج.م)', 'اتقبض']);
+    var head = ['الاسم'].concat(HOSPS.map(function (x) { return x.name; }), ['عدد الشفتات', 'المستحق (ج.م)'], HOSPS.map(function (x) { return 'اتقبض: ' + x.name; }));
     var lines = [head.map(q).join(',')];
     personRows().forEach(function (r) {
-      lines.push([q(r.name)].concat(HOSPS.map(function (x) { return r.c.h[x.k]; }), [r.c.total, r.c.pay, Object.prototype.hasOwnProperty.call(state.paid, r.id) ? q('نعم') : q('لا')]).join(','));
+      lines.push([q(r.name)].concat(HOSPS.map(function (x) { return r.c.h[x.k]; }), [r.c.total, r.c.pay], HOSPS.map(function (x) { return r.c.h[x.k] ? q(isPaidKey(pkey(r.id, x.k)) ? 'نعم' : 'لا') : q('-'); })).join(','));
     });
     try {
       var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
